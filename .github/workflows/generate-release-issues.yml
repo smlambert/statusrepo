@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       versions:
-        description: "Comma-separated list of versions (for example: 1.2.3,1.2.4)"
+        description: "Comma-separated list of versions (for example: JDK8, JDK11)"
         required: true
         type: string
       releaseDate:
@@ -20,21 +20,37 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ secrets.GH_ISSUES_TOKEN }}
       VERSIONS_RAW: ${{ github.event.inputs.versions }}
       RELEASE_DATE: ${{ github.event.inputs.releaseDate }}
       TARGET_REPOS: smlambert/privtestrepo smlambert/pubtestrepo
       TARGET_WORKFLOW_FILE: create-release-issues.yml
     steps:
-      - name: Validate token
+      - name: Validate PAT secret presence
         run: |
-          if [ -z "${GH_TOKEN}" ]; then
+          if [ -z "${{ secrets.GH_ISSUES_TOKEN }}" ]; then
             echo "GH_ISSUES_TOKEN secret is required."
             exit 1
           fi
 
+      - name: Validate PAT access to target repos
+        env:
+          GH_TOKEN: ${{ secrets.GH_ISSUES_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          for repo in ${TARGET_REPOS}; do
+            if ! gh api "repos/${repo}" >/dev/null 2>&1; then
+              echo "Token cannot access ${repo}."
+              echo "For classic PAT, grant repo + workflow scopes."
+              echo "For fine-grained PAT, include ${repo} with Actions (read/write), Issues (read/write), and Contents (read)."
+              exit 1
+            fi
+          done
+
       - name: Dispatch downstream workflows and build status table
         id: dispatch
+        env:
+          GH_TOKEN: ${{ secrets.GH_ISSUES_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -119,6 +135,7 @@ jobs:
 
       - name: Create status tracking issue
         env:
+          GH_TOKEN: ${{ github.token }}
           TABLE_ROWS: ${{ steps.dispatch.outputs.table }}
         shell: bash
         run: |
