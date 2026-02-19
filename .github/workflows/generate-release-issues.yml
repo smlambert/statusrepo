@@ -1,1 +1,144 @@
+name: Generate Release Issues
 
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: "Comma-separated list of versions (for example: 1.2.3,1.2.4)"
+        required: true
+        type: string
+      releaseDate:
+        description: Release date passed to downstream workflows
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_ISSUES_TOKEN }}
+      VERSIONS_RAW: ${{ github.event.inputs.versions }}
+      RELEASE_DATE: ${{ github.event.inputs.releaseDate }}
+      TARGET_REPOS: smlambert/privtestrepo smlambert/pubtestrepo
+      TARGET_WORKFLOW_FILE: create-release-issues.yml
+    steps:
+      - name: Validate token
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "GH_ISSUES_TOKEN secret is required."
+            exit 1
+          fi
+
+      - name: Dispatch downstream workflows and build status table
+        id: dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          versions=()
+          IFS=',' read -ra raw_parts <<< "${VERSIONS_RAW}"
+          for raw in "${raw_parts[@]}"; do
+            trimmed="$(echo "${raw}" | xargs)"
+            if [ -n "${trimmed}" ]; then
+              versions+=("${trimmed}")
+            fi
+          done
+
+          if [ "${#versions[@]}" -eq 0 ]; then
+            echo "No valid versions were provided in input: ${VERSIONS_RAW}"
+            exit 1
+          fi
+
+          table_rows=""
+
+          for version in "${versions[@]}"; do
+            for repo in ${TARGET_REPOS}; do
+              before_ids="$(gh api "repos/${repo}/actions/workflows/${TARGET_WORKFLOW_FILE}/runs?event=workflow_dispatch&branch=main&per_page=50" --jq '.workflow_runs[].id' || true)"
+
+              dispatch_status="ok"
+              if ! gh api \
+                --method POST \
+                "repos/${repo}/actions/workflows/${TARGET_WORKFLOW_FILE}/dispatches" \
+                -f ref='main' \
+                -f inputs[version]="${version}" \
+                -f inputs[releaseDate]="${RELEASE_DATE}" >/dev/null; then
+                dispatch_status="failed"
+              fi
+
+              run_url=""
+              if [ "${dispatch_status}" = "ok" ]; then
+                for _ in $(seq 1 12); do
+                  sleep 5
+                  run_json="$(gh api "repos/${repo}/actions/workflows/${TARGET_WORKFLOW_FILE}/runs?event=workflow_dispatch&branch=main&per_page=20" || true)"
+                  new_run_id="$(echo "${run_json}" | jq -r --arg before "${before_ids}" '
+                    .workflow_runs
+                    | map(select((.id|tostring) as $id | ($before | split("\n") | index($id) | not)))
+                    | sort_by(.created_at)
+                    | reverse
+                    | .[0].id // empty
+                  ')"
+                  if [ -n "${new_run_id}" ]; then
+                    run_url="$(echo "${run_json}" | jq -r --argjson id "${new_run_id}" '.workflow_runs[] | select(.id == $id) | .html_url // empty' | head -n1)"
+                    break
+                  fi
+                done
+              fi
+
+              issue_url=""
+              if [ "${dispatch_status}" = "ok" ]; then
+                issue_url="$(gh api "repos/${repo}/issues?state=all&sort=created&direction=desc&per_page=50" | jq -r --arg v "${version}" --arg d "${RELEASE_DATE}" '
+                  map(select(.pull_request | not))
+                  | map(select((.title | ascii_downcase | contains($v | ascii_downcase)) and (.title | ascii_downcase | contains($d | ascii_downcase))))
+                  | .[0].html_url // empty
+                ' | head -n1)"
+              fi
+
+              run_cell="n/a"
+              if [ -n "${run_url}" ]; then
+                run_cell="[run](${run_url})"
+              fi
+
+              issue_cell="pending"
+              if [ -n "${issue_url}" ]; then
+                issue_cell="[issue](${issue_url})"
+              fi
+
+              table_rows+="| ${repo} | ${version} | ${run_cell} | ${dispatch_status} | ${issue_cell} |"$'\n'
+            done
+          done
+
+          {
+            echo "table<<EOF"
+            echo "${table_rows}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Create status tracking issue
+        env:
+          TABLE_ROWS: ${{ steps.dispatch.outputs.table }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          title="Release issue tracking - ${RELEASE_DATE}"
+          body_file="$(mktemp)"
+
+          {
+            echo "# Release Issue Tracking"
+            echo
+            echo "- Release date: ${RELEASE_DATE}"
+            echo "- Versions: ${VERSIONS_RAW}"
+            echo
+            echo "| Repo | Version | Workflow Run | Dispatch | Created Issue |"
+            echo "| --- | --- | --- | --- | --- |"
+            echo "${TABLE_ROWS}"
+          } > "${body_file}"
+
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${title}" \
+            --body-file "${body_file}"
