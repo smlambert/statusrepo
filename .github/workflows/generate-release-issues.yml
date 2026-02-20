@@ -11,6 +11,10 @@ on:
         description: Release date passed to downstream workflows
         required: true
         type: string
+      matrixInt:
+        description: Determine the coverage matrix
+        required: true
+        type: number
 
 permissions:
   contents: read
@@ -22,6 +26,7 @@ jobs:
     env:
       VERSIONS_RAW: ${{ github.event.inputs.versions }}
       RELEASE_DATE: ${{ github.event.inputs.releaseDate }}
+      MATRIX_INT: ${{ github.event.inputs.matrixInt }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -33,5 +38,5 @@ jobs:
             curl -H "Accept: application/vnd.github.everest-preview+json" \
             -H "Authorization: token ${{ secrets.GH_ISSUES_TOKEN }}" \
             --request POST \
-            --data '{"event_type": "custom_event", "client_payload": { "version": "${{ github.event.inputs.versions }}", "releaseDate": "${{ github.event.inputs.releaseDate }}" }}' https://api.github.com/repos/${{ matrix.repo }}/dispatches
+            --data '{"event_type": "custom_event", "client_payload": { "version": "${{ github.event.inputs.versions }}", "releaseDate": "${{ github.event.inputs.releaseDate }}", "matrixInt": "${{ github.event.inputs.matrixInt }}" }}' https://api.github.com/repos/${{ matrix.repo }}/dispatches
             
