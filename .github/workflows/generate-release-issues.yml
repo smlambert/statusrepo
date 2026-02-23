@@ -3,17 +3,21 @@ name: Generate Release Issues
 on:
   workflow_dispatch:
     inputs:
-      versions:
-        description: "Comma-separated list of versions (for example: JDK8, JDK11)"
+      version:
+        description: "JDK version (for example: JDK8, JDK11)"
         required: true
         type: string
       releaseDate:
         description: Release date passed to downstream workflows
         required: true
         type: string
+      pipelineUrl: 
+        description: "URL of the associated JDK version release pipeline"
+        required: false
+        type: string
       matrixInt:
-        description: Determine the coverage matrix
-        required: true
+        description: Coverage matrix parameter (Jan/July==1, Apr/Oct==2)
+        required: false
         type: number
 
 permissions:
@@ -24,8 +28,9 @@ jobs:
   dispatch:
     name: Dispatch
     env:
-      VERSIONS_RAW: ${{ github.event.inputs.versions }}
+      VERSION_RAW: ${{ github.event.inputs.version }}
       RELEASE_DATE: ${{ github.event.inputs.releaseDate }}
+      PIPELINE_URL: ${{ github.event.inputs.pipelineUrl }}
       MATRIX_INT: ${{ github.event.inputs.matrixInt }}
     runs-on: ubuntu-latest
     strategy:
@@ -38,5 +43,5 @@ jobs:
             curl -H "Accept: application/vnd.github.everest-preview+json" \
             -H "Authorization: token ${{ secrets.GH_ISSUES_TOKEN }}" \
             --request POST \
-            --data '{"event_type": "custom_event", "client_payload": { "version": "${{ github.event.inputs.versions }}", "releaseDate": "${{ github.event.inputs.releaseDate }}", "matrixInt": "${{ github.event.inputs.matrixInt }}" }}' https://api.github.com/repos/${{ matrix.repo }}/dispatches
+            --data '{"event_type": "custom_event", "client_payload": { "version": "${{ env.VERSION_RAW }}", "releaseDate": "${{ env.RELEASE_DATE }}", "pipelineUrl": "${{ env.PIPELINE_URL }}", "matrixInt": "${{ env.MATRIX_INT }}" }}' https://api.github.com/repos/${{ matrix.repo }}/dispatches
             
