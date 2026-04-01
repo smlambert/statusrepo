@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "JDK version (for example: JDK8, JDK11)"
+        description: "JDK version (for example: 8 or 11)"
         required: true
         type: string
       releaseDate:
-        description: Release date passed to downstream workflows
+        description: "Release date passed to downstream workflows, ie. March 2026"
         required: true
         type: string
       pipelineUrl: 
-        description: "URL of the associated JDK version release pipeline"
+        description: "Optional URL of the associated JDK version release pipeline"
         required: false
         type: string
       matrixInt:
